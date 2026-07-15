@@ -2,6 +2,8 @@
 
 import WebSocket from "ws";
 import * as readline from "readline";
+import { fileURLToPath } from "url";
+import * as path from "path";
 
 import type {
   SetupPayload,
@@ -15,7 +17,8 @@ import type {
 } from "./lib/types.js";
 import { sha256Hex, randomBigInt, versionAsInt, newGUID, SRPc } from "./lib/crypto.js";
 import { encryptAesCbc, decryptAesCbc } from "./lib/encryption.js";
-import { loadStoredAuth, saveStoredAuth, deleteStoredAuth } from "./lib/auth.js";
+import { createAuthStore } from "./lib/auth.js";
+import { type OutputFormat, formatList, formatTable, formatJSON } from "./lib/format.js";
 
 // ─── CLI Constants ──────────────────────────────────────────────────────────────
 const CLIENT_VERSION = [2, 0, 0];
@@ -56,11 +59,32 @@ function buildSetupMessage(srp?: SetupPayload, key?: KeySetupPayload): OutgoingS
 }
 
 async function main() {
-  const url = process.argv[2] || null;
-  const port = parseInt(process.argv[3] || "12546", 10);
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const auth = createAuthStore(scriptDir);
+
+  const args = process.argv.slice(2);
+  let format: OutputFormat = "list";
+  const positional: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === "--format" || args[i] === "-f") && args[i + 1]) {
+      const val = args[++i];
+      if (val === "list" || val === "table" || val === "json") {
+        format = val;
+      } else {
+        console.error(`Unknown format: ${val}. Use list, table, or json.`);
+        process.exit(1);
+      }
+    } else {
+      positional.push(args[i]);
+    }
+  }
+
+  const url = positional[0] || null;
+  const port = parseInt(positional[1] || "12546", 10);
 
   while (true) {
-    const storedAuth = loadStoredAuth();
+    const storedAuth = auth.load();
     if (storedAuth) {
       console.log("Found stored auth key. Attempting key-based authentication...");
     } else {
@@ -137,7 +161,7 @@ async function main() {
         if (storedAuth && isAuthError) {
           console.error("Stored key is invalid or expired. Falling back to SRP authentication...");
           shouldReconnect = true;
-          deleteStoredAuth();
+          auth.delete();
           ws.close();
           return;
         }
@@ -249,7 +273,7 @@ async function main() {
             console.log("SRP authentication successful!");
             secretKey = await srpClient.key();
 
-            saveStoredAuth({
+            auth.save({
               username: srpClient.I,
               secretKey,
             });
@@ -291,27 +315,16 @@ async function main() {
         if (Array.isArray(results) && results.length === 0) {
           console.log("No matching logins found.");
         } else if (Array.isArray(results)) {
-          console.log(`Found ${results.length} login(s):\n`);
-          for (const entry of results) {
-            const login = entry as LoginEntry;
-            const title = login.title || "(untitled)";
-            const username = login.uN || login.usernameValue || "(no username)";
-            const urls = (login.uRLs || []).join(", ") || "(no URLs)";
-            const matchAccuracy = login.matchAccuracy || "?";
-            const fields = login.formFieldList || [];
-
-            console.log(`  Title:            ${title}`);
-            console.log(`  Username:         ${username}`);
-            console.log(`  URLs:             ${urls}`);
-            console.log(`  Match Accuracy:   ${matchAccuracy}`);
-            if (fields.length > 0) {
-              console.log(`  Fields:`);
-              for (const f of fields) {
-                const val = f.type === "FFTpassword" ? "********" : f.value;
-                console.log(`    - ${f.displayName || f.name}: ${val}`);
-              }
-            }
-            console.log();
+          const entries = results as LoginEntry[];
+          switch (format) {
+            case "table":
+              console.log(formatTable(entries));
+              break;
+            case "json":
+              console.log(formatJSON(entries));
+              break;
+            default:
+              console.log(formatList(entries));
           }
         } else {
           console.log("Result:", JSON.stringify(obj.result, null, 2));
