@@ -1,0 +1,113 @@
+# KeePassRPC-CLI
+
+Command-line client for [KeePassRPC](https://github.com/kee-org/keepassrpc). Queries logins from KeePass databases over a local WebSocket connection.
+
+## Prerequisites
+
+KeePassRPC plugin must be installed and running in KeePass:
+
+1. Open KeePass
+2. Go to **Tools > KeePassRPC options**
+3. Ensure the WebSocket server is enabled (default port: `12546`)
+
+On first connection, KeePass will display a pop-up with a randomly generated connection password. You will be prompted to enter this password into the CLI.
+
+## Installation
+
+```bash
+git clone https://github.com/Drealise/keepassrpc-cli.git
+cd keepassrpc-cli
+npm install
+```
+
+For global usage:
+
+```bash
+npm run build
+npm link
+```
+
+## Usage
+
+### Query logins by URL
+
+```bash
+keepassrpc-cli https://github.com/login
+# or
+npm run start -- https://github.com/login
+```
+
+### Return all stored logins
+
+```bash
+keepassrpc-cli
+# or
+npm run start
+```
+
+### Specify a custom port
+
+```bash
+keepassrpc-cli https://github.com/login 12547
+# or
+npm run start -- https://github.com/login 12547
+```
+
+### First run
+
+On first run, you will be prompted for the KeePassRPC connection password. The session key is saved automatically for future use.  
+Then the query results are returned.
+
+### Subsequent runs
+
+After the first run, the stored session key is used automatically — no password prompt.  
+Then the query results are returned.
+
+### Expired or invalid session key
+
+If the stored session key expires or becomes invalid, or the file contents become invalid or corrupted, the tool automatically falls back to SRP authentication, then reconnects using the new key.  
+Then the query results are returned.
+
+## Command Line Arguments
+
+```bash
+keepassrpc-cli [url] [port]
+# or
+npm run start -- [url] [port]
+```
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `url` | URL to query logins for. Omit to return all stored logins. | none |
+| `port` | KeePassRPC WebSocket port | `12546` |
+
+## Session Key File
+
+After the first successful authentication, a session key is saved to `keepassrpc-cli.auth` in the same directory as the script. This file is created automatically and used for subsequent connections.
+
+**Note**: This file contains sensitive session data. It is listed in `.gitignore` by default.
+
+## Development
+
+```bash
+npm run dev        # Run in development mode
+npm run typecheck  # Type check
+npm run build      # Build for production
+```
+
+## License
+
+This project is licensed under a custom FOSS license with non-commercial and share-alike terms.
+
+You are free to:
+
+- **Fork** and modify the code
+- **Use** it for personal and commercial purposes (see restrictions below)
+
+Under the following terms:
+
+- **Attribution** — Credit must be given when repurposing or redistributing this work or derivative works.
+- **Non-Commercial** — This software may not be used for commercial purposes without permission.
+- **Share-Alike** — Derivative works must be distributed under the same license terms.
+
+For questions about commercial use, please open an issue.

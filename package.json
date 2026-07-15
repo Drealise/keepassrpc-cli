@@ -1,0 +1,38 @@
+{
+  "name": "keepassrpc-cli",
+  "displayName": "KeePassRPC CLI",
+  "description": "Command-line client for KeePassRPC WebSocket API. Queries logins from KeePass databases via SRP-6a authentication.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/KeePassRPC-CLI.js",
+  "bin": {
+    "keepassrpc-cli": "dist/KeePassRPC-CLI.js"
+  },
+  "scripts": {
+    "start": "esno src/KeePassRPC-CLI.ts",
+    "build": "tsc",
+    "dev": "esno src/KeePassRPC-CLI.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "keepass",
+    "keepassrpc",
+    "password-manager",
+    "srp",
+    "websocket",
+    "cli"
+  ],
+  "author": "",
+  "license": "SEE LICENSE IN README.md",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12",
+    "esno": "^4.7.0",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
