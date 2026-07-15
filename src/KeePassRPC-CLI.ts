@@ -1,282 +1,23 @@
 #!/usr/bin/env node
 
 import WebSocket from "ws";
-import * as crypto from "crypto";
 import * as readline from "readline";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
 
-// ─── Protocol Types ─────────────────────────────────────────────────────────────
-interface SetupPayload {
-  stage: string;
-  I?: string;
-  A?: string;
-  M?: string;
-  securityLevel?: number;
-}
+import type {
+  SetupPayload,
+  KeySetupPayload,
+  OutgoingSetupMessage,
+  IncomingSetupMessage,
+  EncryptedPayload,
+  JSONRPCMessage,
+  JSONRPCResponse,
+  LoginEntry,
+} from "./lib/types.js";
+import { sha256Hex, randomBigInt, versionAsInt, newGUID, SRPc } from "./lib/crypto.js";
+import { encryptAesCbc, decryptAesCbc } from "./lib/encryption.js";
+import { loadStoredAuth, saveStoredAuth, deleteStoredAuth } from "./lib/auth.js";
 
-interface KeySetupPayload {
-  username?: string;
-  securityLevel?: number;
-  cc?: string;
-  cr?: string;
-}
-
-interface OutgoingSetupMessage {
-  protocol: "setup";
-  srp: SetupPayload | null;
-  key: KeySetupPayload | null;
-  version: number;
-  features?: string[];
-  clientTypeId?: string;
-  clientDisplayName?: string;
-  clientDisplayDescription?: string;
-}
-
-interface IncomingSetupMessage {
-  protocol: "setup";
-  srp?: { stage: string; s?: string; B?: string; M2?: string; securityLevel?: number };
-  key?: { sc?: string; sr?: string; username?: string; securityLevel?: number; cc?: string; cr?: string };
-  error?: { code: string | number; messageParams?: string[] };
-}
-
-interface EncryptedPayload {
-  message: string;
-  iv: string;
-  hmac: string;
-}
-
-interface JSONRPCMessage {
-  protocol: "jsonrpc";
-  jsonrpc: string | EncryptedPayload;
-  encryptionNotRequired?: boolean;
-  error?: { code: string | number; message?: string; messageParams?: string[] };
-  version?: number;
-}
-
-interface JSONRPCResponse {
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-  id?: number;
-}
-
-interface LoginEntry {
-  title?: string;
-  uN?: string;
-  usernameValue?: string;
-  uRLs?: string[];
-  matchAccuracy?: number | string;
-  formFieldList?: Array<{
-    type: string;
-    name?: string;
-    displayName?: string;
-    value?: string;
-  }>;
-}
-
-// ─── SRP Constants ──────────────────────────────────────────────────────────────
-const N = BigInt(
-  "0xd4c7f8a2b32c11b8fba9581ec4ba4f1b04215642ef7355e37c0fc0443ef756ea2c6b8eeb755a1c723027663caa265ef785b8ff6a9b35227a52d86633dbdfca43"
-);
-const g = 2n;
-const k = BigInt("0xb7867f1299da8cc24ab93e08986ebc4d6a478ad0");
-
-// ─── Crypto Helpers ─────────────────────────────────────────────────────────────
-function sha256Hex(data: string): string {
-  return crypto.createHash("sha256").update(data, "utf8").digest("hex");
-}
-
-function modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
-  let result = 1n;
-  base = ((base % modulus) + modulus) % modulus;
-  while (exponent > 0n) {
-    if (exponent & 1n) {
-      result = (result * base) % modulus;
-    }
-    exponent >>= 1n;
-    if (exponent > 0n) {
-      base = (base * base) % modulus;
-    }
-  }
-  return result;
-}
-
-function randomBigInt(byteCount: number): bigint {
-  const bytes = crypto.randomBytes(byteCount);
-  return BigInt("0x" + bytes.toString("hex"));
-}
-
-function hexStringToByteArray(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return bytes;
-}
-
-function versionAsInt([major, minor, patch]: number[]): number {
-  return (major << 16) | (minor << 8) | patch;
-}
-
-function newGUID(): string {
-  const bytes = crypto.randomBytes(16);
-  const hex = bytes.toString("hex");
-  return (
-    hex.slice(0, 8) +
-    "-" +
-    hex.slice(8, 12) +
-    "-" +
-    "4" + hex.slice(13, 16) +
-    "-" +
-    ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16) + hex.slice(18, 20) +
-    "-" +
-    hex.slice(20, 32)
-  );
-}
-
-// ─── SRP Client ─────────────────────────────────────────────────────────────────
-class SRPc {
-  public Astr: string;
-  private A: bigint;
-  private a: bigint;
-  private S: bigint = 0n;
-  private K: string = "";
-  public M: string = "";
-  private M2: string = "";
-  public p: string = "";
-  public I: string = "";
-  public authenticated = false;
-
-  constructor() {
-    this.a = randomBigInt(32);
-    this.A = modPow(g, this.a, N);
-    while (this.A % N === 0n) {
-      this.a = randomBigInt(32);
-      this.A = modPow(g, this.a, N);
-    }
-    this.Astr = this.A.toString(16).toUpperCase();
-  }
-
-  setup(username: string) {
-    this.I = username;
-  }
-
-  async receiveSalts(s: string, Bstr: string): Promise<void> {
-    if (!this.p) throw new Error("password not set");
-    const B = BigInt("0x" + Bstr);
-
-    const [uHash, xHash] = await Promise.all([
-      sha256Hex(this.Astr + Bstr).toUpperCase(),
-      sha256Hex(s + this.p).toUpperCase(),
-    ]);
-
-    const u = BigInt("0x" + uHash);
-    const x = BigInt("0x" + xHash);
-
-    const kgx = k * modPow(g, x, N);
-    const aux = this.a + u * x;
-    this.S = modPow(B - kgx, aux, N);
-
-    const Mstr =
-      this.A.toString(16).toUpperCase() +
-      B.toString(16).toUpperCase() +
-      this.S.toString(16).toUpperCase();
-    this.M = await sha256Hex(Mstr);
-
-    this.M2 = await sha256Hex(
-      this.A.toString(16).toUpperCase() + this.M + this.S.toString(16).toUpperCase()
-    );
-  }
-
-  confirmAuthentication(M2server: string): boolean {
-    if (M2server.toLowerCase() === this.M2.toLowerCase()) {
-      this.authenticated = true;
-      return true;
-    }
-    return false;
-  }
-
-  async key(): Promise<string> {
-    if (this.authenticated) {
-      this.K = sha256Hex(this.S.toString(16).toUpperCase());
-      return this.K;
-    }
-    return "";
-  }
-}
-
-// ─── Encryption / Decryption ────────────────────────────────────────────────────
-function encryptAesCbc(
-  secretKeyHex: string,
-  plaintext: string
-): { message: string; iv: string; hmac: string } {
-  const secretKeyBytes = hexStringToByteArray(secretKeyHex);
-  const iv = crypto.randomBytes(16);
-
-  const cipher = crypto.createCipheriv("aes-256-cbc", secretKeyBytes, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-
-  const keyHash = crypto.createHash("sha1").update(secretKeyBytes).digest();
-  const hmacData = Buffer.concat([keyHash, encrypted, iv]);
-  const hmac = crypto.createHash("sha1").update(hmacData).digest("base64");
-
-  return {
-    message: encrypted.toString("base64"),
-    iv: iv.toString("base64"),
-    hmac,
-  };
-}
-
-function decryptAesCbc(
-  secretKeyHex: string,
-  enc: { message: string; iv: string; hmac: string }
-): string {
-  const secretKeyBytes = hexStringToByteArray(secretKeyHex);
-  const messageBytes = new Uint8Array(Buffer.from(enc.message, "base64"));
-  const ivBytes = new Uint8Array(Buffer.from(enc.iv, "base64"));
-
-  const keyHash = crypto.createHash("sha1").update(secretKeyBytes).digest();
-  const hmacData = Buffer.concat([keyHash, Buffer.from(messageBytes), Buffer.from(ivBytes)]);
-  const expectedHmac = crypto.createHash("sha1").update(hmacData).digest("base64");
-
-  if (expectedHmac !== enc.hmac) {
-    throw new Error("HMAC verification failed");
-  }
-
-  const decipher = crypto.createDecipheriv("aes-256-cbc", secretKeyBytes, ivBytes);
-  const decrypted = Buffer.concat([decipher.update(messageBytes), decipher.final()]);
-  return decrypted.toString("utf8");
-}
-
-// ─── Auth Key Persistence ───────────────────────────────────────────────────────
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const AUTH_FILE = path.join(__dirname, "keepassrpc-cli.auth");
-
-interface StoredAuth {
-  username: string;
-  secretKey: string;
-}
-
-function loadStoredAuth(): StoredAuth | null {
-  try {
-    if (fs.existsSync(AUTH_FILE)) {
-      const data = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
-      if (data.username && data.secretKey) return data;
-    }
-  } catch {
-    // corrupted file, ignore
-  }
-  return null;
-}
-
-function saveStoredAuth(auth: StoredAuth): void {
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), "utf8");
-  console.log(`Auth key saved to ${AUTH_FILE}`);
-}
-
-// ─── CLI ────────────────────────────────────────────────────────────────────────
+// ─── CLI Constants ──────────────────────────────────────────────────────────────
 const CLIENT_VERSION = [2, 0, 0];
 const CLIENT_TYPE_ID = "keefox";
 const CLIENT_DISPLAY_NAME = "Kee CLI";
@@ -396,7 +137,7 @@ async function main() {
         if (storedAuth && isAuthError) {
           console.error("Stored key is invalid or expired. Falling back to SRP authentication...");
           shouldReconnect = true;
-          try { fs.unlinkSync(AUTH_FILE); } catch { /* ignore */ }
+          deleteStoredAuth();
           ws.close();
           return;
         }
