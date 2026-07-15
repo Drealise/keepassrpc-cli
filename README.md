@@ -111,3 +111,7 @@ Under the following terms:
 - **Share-Alike** — Derivative works must be distributed under the same license terms.
 
 For questions about commercial use, please open an issue.
+
+## Further Reading
+
+[Technical Details](README-TECH.md) — protocol flow, encryption, and SRP parameters.
