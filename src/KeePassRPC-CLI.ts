@@ -7,6 +7,74 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
+// ─── Protocol Types ─────────────────────────────────────────────────────────────
+interface SetupPayload {
+  stage: string;
+  I?: string;
+  A?: string;
+  M?: string;
+  securityLevel?: number;
+}
+
+interface KeySetupPayload {
+  username?: string;
+  securityLevel?: number;
+  cc?: string;
+  cr?: string;
+}
+
+interface OutgoingSetupMessage {
+  protocol: "setup";
+  srp: SetupPayload | null;
+  key: KeySetupPayload | null;
+  version: number;
+  features?: string[];
+  clientTypeId?: string;
+  clientDisplayName?: string;
+  clientDisplayDescription?: string;
+}
+
+interface IncomingSetupMessage {
+  protocol: "setup";
+  srp?: { stage: string; s?: string; B?: string; M2?: string; securityLevel?: number };
+  key?: { sc?: string; sr?: string; username?: string; securityLevel?: number; cc?: string; cr?: string };
+  error?: { code: string | number; messageParams?: string[] };
+}
+
+interface EncryptedPayload {
+  message: string;
+  iv: string;
+  hmac: string;
+}
+
+interface JSONRPCMessage {
+  protocol: "jsonrpc";
+  jsonrpc: string | EncryptedPayload;
+  encryptionNotRequired?: boolean;
+  error?: { code: string | number; message?: string; messageParams?: string[] };
+  version?: number;
+}
+
+interface JSONRPCResponse {
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+  id?: number;
+}
+
+interface LoginEntry {
+  title?: string;
+  uN?: string;
+  usernameValue?: string;
+  uRLs?: string[];
+  matchAccuracy?: number | string;
+  formFieldList?: Array<{
+    type: string;
+    name?: string;
+    displayName?: string;
+    value?: string;
+  }>;
+}
+
 // ─── SRP Constants ──────────────────────────────────────────────────────────────
 const N = BigInt(
   "0xd4c7f8a2b32c11b8fba9581ec4ba4f1b04215642ef7355e37c0fc0443ef756ea2c6b8eeb755a1c723027663caa265ef785b8ff6a9b35227a52d86633dbdfca43"
@@ -17,10 +85,6 @@ const k = BigInt("0xb7867f1299da8cc24ab93e08986ebc4d6a478ad0");
 // ─── Crypto Helpers ─────────────────────────────────────────────────────────────
 function sha256Hex(data: string): string {
   return crypto.createHash("sha256").update(data, "utf8").digest("hex");
-}
-
-function sha256HexUpper(data: string): string {
-  return sha256Hex(data).toUpperCase();
 }
 
 function modPow(base: bigint, exponent: bigint, modulus: bigint): bigint {
@@ -51,12 +115,8 @@ function hexStringToByteArray(hex: string): Uint8Array {
   return bytes;
 }
 
-function versionAsInt(versionArray: number[]): number {
-  let value = 0;
-  for (const v of versionArray) {
-    value = value * 256 + v;
-  }
-  return value;
+function versionAsInt([major, minor, patch]: number[]): number {
+  return (major << 16) | (minor << 8) | patch;
 }
 
 function newGUID(): string {
@@ -107,8 +167,8 @@ class SRPc {
     const B = BigInt("0x" + Bstr);
 
     const [uHash, xHash] = await Promise.all([
-      sha256HexUpper(this.Astr + Bstr),
-      sha256HexUpper(s + this.p),
+      sha256Hex(this.Astr + Bstr).toUpperCase(),
+      sha256Hex(s + this.p).toUpperCase(),
     ]);
 
     const u = BigInt("0x" + uHash);
@@ -240,8 +300,8 @@ function prompt(question: string): Promise<string> {
   });
 }
 
-function buildSetupMessage(srp?: any, key?: any): object {
-  const msg: any = {
+function buildSetupMessage(srp?: SetupPayload, key?: KeySetupPayload): OutgoingSetupMessage {
+  const msg: OutgoingSetupMessage = {
     protocol: "setup",
     srp: srp || null,
     key: key || null,
@@ -258,322 +318,311 @@ async function main() {
   const url = process.argv[2] || null;
   const port = parseInt(process.argv[3] || "12546", 10);
 
-  // Check for stored auth key
-  const storedAuth = loadStoredAuth();
-  if (storedAuth) {
-    console.log("Found stored auth key. Attempting key-based authentication...");
-  } else {
-    console.log("No valid auth key stored. Will use SRP password authentication.");
-  }
+  while (true) {
+    const storedAuth = loadStoredAuth();
+    if (storedAuth) {
+      console.log("Found stored auth key. Attempting key-based authentication...");
+    } else {
+      console.log("No valid auth key stored. Will use SRP password authentication.");
+    }
 
-  console.log(`Connecting to KeePassRPC on ws://127.0.0.1:${port}...\n`);
+    console.log(`Connecting to KeePassRPC on ws://127.0.0.1:${port}...\n`);
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`, [], {
-    perMessageDeflate: false,
-    headers: { Origin: "chrome-extension://" + (storedAuth?.username || "cli-client") },
-  });
-
-  let secretKey: string | null = null;
-  let nextRequestId = 1;
-
-  // SRP state (used only during SRP auth)
-  let srpClient: SRPc | null = null;
-  let srpComplete = false;
-  let keyAuthFailed = false;
-
-  // Key challenge state (used only during key-based auth)
-  let keyChallengeParams: { sc: string; cc: string } | null = null;
-
-  function sendMessage(data: object) {
-    ws.send(JSON.stringify(data));
-  }
-
-  function sendEncryptedRPC(method: string, params: any[]): void {
-    if (!secretKey) throw new Error("Not authenticated");
-
-    const rpcPayload = JSON.stringify({
-      jsonrpc: "2.0",
-      method,
-      params,
-      id: nextRequestId++,
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, [], {
+      perMessageDeflate: false,
+      headers: { Origin: "chrome-extension://keepassrpc-cli" },
     });
 
-    const enc = encryptAesCbc(secretKey, rpcPayload);
+    let secretKey: string | null = null;
+    let nextRequestId = 1;
+    let srpClient: SRPc | null = null;
+    let shouldReconnect = false;
+    let keyChallengeParams: { sc: string; cc: string } | null = null;
 
-    sendMessage({
-      protocol: "jsonrpc",
-      srp: null,
-      key: null,
-      error: null,
-      jsonrpc: enc,
-      version: versionAsInt(CLIENT_VERSION),
-    });
-  }
+    function sendMessage(data: object) {
+      ws.send(JSON.stringify(data));
+    }
 
-  function handleMessage(raw: string) {
-    try {
-      const data = JSON.parse(raw);
-      switch (data.protocol) {
-        case "setup":
-          handleSetup(data).catch((err) => {
-            console.error("Error during setup:", err);
+    function sendEncryptedRPC(method: string, params: unknown[]): void {
+      if (!secretKey) throw new Error("Not authenticated");
+
+      const rpcPayload = JSON.stringify({
+        jsonrpc: "2.0",
+        method,
+        params,
+        id: nextRequestId++,
+      });
+
+      const enc = encryptAesCbc(secretKey, rpcPayload);
+
+      sendMessage({
+        protocol: "jsonrpc",
+        srp: null,
+        key: null,
+        error: null,
+        jsonrpc: enc,
+        version: versionAsInt(CLIENT_VERSION),
+      });
+    }
+
+    function handleMessage(raw: string) {
+      try {
+        const data: Record<string, unknown> = JSON.parse(raw);
+        switch (data.protocol) {
+          case "setup":
+            handleSetup(data as unknown as IncomingSetupMessage).catch((err) => {
+              console.error("Error during setup:", err);
+              ws.close();
+            });
+            break;
+          case "jsonrpc":
+            handleJSONRPC(data as unknown as JSONRPCMessage);
+            break;
+          case "error":
+            console.error("Server error:", (data.error as Record<string, unknown>)?.code, (data.error as Record<string, unknown>)?.messageParams);
             ws.close();
+            break;
+        }
+      } catch (err: unknown) {
+        console.error("Failed to process message:", (err as Error).message);
+        ws.close();
+      }
+    }
+
+    async function handleSetup(data: IncomingSetupMessage) {
+      if (data.error) {
+        const errorCode = String(data.error.code).toUpperCase();
+        const isAuthError = errorCode === "AUTH_FAILED" || errorCode === "AUTH_EXPIRED";
+        if (storedAuth && isAuthError) {
+          console.error("Stored key is invalid or expired. Falling back to SRP authentication...");
+          shouldReconnect = true;
+          try { fs.unlinkSync(AUTH_FILE); } catch { /* ignore */ }
+          ws.close();
+          return;
+        }
+        console.error("Setup error:", data.error.code, data.error.messageParams);
+        ws.close();
+        return;
+      }
+
+      if (data.key) {
+        const activeKey = storedAuth?.secretKey || secretKey;
+        if (!activeKey) {
+          console.error("Server sent key challenge but no key is available.");
+          ws.close();
+          return;
+        }
+
+        if (data.key.sc) {
+          console.log("Received server challenge. Responding...");
+          const cc = randomBigInt(32).toString(16).toLowerCase();
+          const cr = sha256Hex(
+            "1" + activeKey + data.key.sc + cc
+          ).toLowerCase();
+
+          keyChallengeParams = { sc: data.key.sc, cc };
+
+          sendMessage({
+            protocol: "setup",
+            key: {
+              cc,
+              cr,
+              securityLevel: SECURITY_LEVEL,
+            },
+            version: versionAsInt(CLIENT_VERSION),
           });
-          break;
-        case "jsonrpc":
-          handleJSONRPC(data);
-          break;
-        case "error":
-          console.error("Server error:", data.error?.code, data.error?.messageParams);
-          ws.close();
-          break;
-      }
-    } catch (err: any) {
-      console.error("Failed to process message:", err.message);
-      ws.close();
-    }
-  }
-
-  async function handleSetup(data: any) {
-    if (data.error) {
-      // AUTH_FAILED=11, AUTH_EXPIRED=12 — fall back to SRP if we were using a stored key
-      const errorCode = String(data.error.code).toUpperCase();
-      const isAuthError = errorCode === "AUTH_FAILED" || errorCode === "AUTH_EXPIRED";
-      if (storedAuth && isAuthError) {
-        console.error("Stored key is invalid or expired. Falling back to SRP authentication...");
-        keyAuthFailed = true;
-        try { fs.unlinkSync(AUTH_FILE); } catch { /* ignore */ }
-        ws.close();
-        return;
-      }
-      console.error("Setup error:", data.error.code, data.error.messageParams);
-      ws.close();
-      return;
-    }
-
-    // ── Key-based challenge-response path ──────────────────────────────────────
-    if (data.key) {
-      const activeKey = storedAuth?.secretKey || secretKey;
-      if (!activeKey) {
-        console.error("Server sent key challenge but no key is available.");
-        ws.close();
-        return;
-      }
-
-      if (data.key.sc) {
-        // Server challenge: compute client response
-        console.log("Received server challenge. Responding...");
-        const cc = randomBigInt(32).toString(16).toLowerCase();
-        const cr = sha256Hex(
-          "1" + activeKey + data.key.sc + cc
-        ).toLowerCase();
-
-        keyChallengeParams = { sc: data.key.sc, cc };
-
-        sendMessage({
-          protocol: "setup",
-          key: {
-            cc,
-            cr,
-            securityLevel: SECURITY_LEVEL,
-          },
-          version: versionAsInt(CLIENT_VERSION),
-        });
-        return;
-      }
-
-      if (data.key.sr && keyChallengeParams) {
-        // Server response: verify
-        const expectedSr = sha256Hex(
-          "0" + activeKey + keyChallengeParams.sc + keyChallengeParams.cc
-        ).toLowerCase();
-
-        if (expectedSr !== data.key.sr.toLowerCase()) {
-          console.error("Key authentication FAILED: server proof mismatch.");
-          console.error("Stored key may be revoked. Remove the auth file and re-authenticate.");
-          ws.close();
           return;
         }
 
-        // Success
-        secretKey = activeKey;
-        console.log("Key authentication successful!\n");
-        if (url) {
-          console.log(`Querying logins for: ${url}\n`);
-          sendEncryptedRPC("FindLogins", [
-            [url],
-            null,
-            null,
-            "LSTnoForms",
-            false,
-            null,
-            null,
-            null,
-            null,
-          ]);
+        if (data.key.sr && keyChallengeParams) {
+          const expectedSr = sha256Hex(
+            "0" + activeKey + keyChallengeParams.sc + keyChallengeParams.cc
+          ).toLowerCase();
+
+          if (expectedSr !== data.key.sr.toLowerCase()) {
+            console.error("Key authentication FAILED: server proof mismatch.");
+            console.error("Stored key may be revoked. Remove the auth file and re-authenticate.");
+            ws.close();
+            return;
+          }
+
+          secretKey = activeKey;
+          console.log("Key authentication successful!\n");
+          if (url) {
+            console.log(`Querying logins for: ${url}\n`);
+            sendEncryptedRPC("FindLogins", [
+              [url],
+              null,
+              null,
+              "LSTnoForms",
+              false,
+              null,
+              null,
+              null,
+              null,
+            ]);
+          } else {
+            console.log("No URL specified. Returning all stored logins.\n");
+            sendEncryptedRPC("GetAllEntries", []);
+          }
+          return;
+        }
+      }
+
+      if (data.srp) {
+        if (data.srp.stage === "identifyToClient") {
+          if (!srpClient) {
+            console.error("Received SRP challenge but client not initialized.");
+            ws.close();
+            return;
+          }
+          console.log("KeePass is requesting authentication.");
+          console.log(
+            "Please enter the KeePassRPC connection password\n"
+          );
+
+          const password = await prompt("Password: ");
+
+          srpClient.p = password;
+
+          await srpClient.receiveSalts(data.srp.s ?? "", data.srp.B ?? "");
+
+          sendMessage(
+            buildSetupMessage({
+              stage: "proofToServer",
+              M: srpClient.M,
+              securityLevel: SECURITY_LEVEL,
+            })
+          );
+          return;
+        }
+
+        if (data.srp.stage === "proofToClient") {
+          if (!srpClient) {
+            console.error("Received proof but SRP client not initialized.");
+            ws.close();
+            return;
+          }
+
+          if (srpClient.confirmAuthentication(data.srp.M2 ?? "")) {
+            console.log("SRP authentication successful!");
+            secretKey = await srpClient.key();
+
+            saveStoredAuth({
+              username: srpClient.I,
+              secretKey,
+            });
+
+            shouldReconnect = true;
+            console.log("Key saved. Reconnecting with stored key...");
+            ws.close();
+          } else {
+            console.error("Authentication FAILED: server proof mismatch.");
+            ws.close();
+          }
+          return;
+        }
+
+        return;
+      }
+    }
+
+    function handleJSONRPC(data: JSONRPCMessage) {
+      if (data.encryptionNotRequired) {
+        const obj: JSONRPCResponse = typeof data.jsonrpc === "string" ? JSON.parse(data.jsonrpc) : data.jsonrpc;
+        printResult(obj);
+      } else if (secretKey) {
+        try {
+          const decrypted = decryptAesCbc(secretKey, data.jsonrpc as EncryptedPayload);
+          const obj: JSONRPCResponse = JSON.parse(decrypted);
+          printResult(obj);
+        } catch (e: unknown) {
+          console.error("Decryption failed:", (e as Error).message);
+        }
+      }
+    }
+
+    function printResult(obj: JSONRPCResponse) {
+      if (obj.error) {
+        console.error("RPC Error:", JSON.stringify(obj.error, null, 2));
+      } else if (obj.result !== undefined) {
+        const results = obj.result;
+        if (Array.isArray(results) && results.length === 0) {
+          console.log("No matching logins found.");
+        } else if (Array.isArray(results)) {
+          console.log(`Found ${results.length} login(s):\n`);
+          for (const entry of results) {
+            const login = entry as LoginEntry;
+            const title = login.title || "(untitled)";
+            const username = login.uN || login.usernameValue || "(no username)";
+            const urls = (login.uRLs || []).join(", ") || "(no URLs)";
+            const matchAccuracy = login.matchAccuracy || "?";
+            const fields = login.formFieldList || [];
+
+            console.log(`  Title:            ${title}`);
+            console.log(`  Username:         ${username}`);
+            console.log(`  URLs:             ${urls}`);
+            console.log(`  Match Accuracy:   ${matchAccuracy}`);
+            if (fields.length > 0) {
+              console.log(`  Fields:`);
+              for (const f of fields) {
+                const val = f.type === "FFTpassword" ? "********" : f.value;
+                console.log(`    - ${f.displayName || f.name}: ${val}`);
+              }
+            }
+            console.log();
+          }
         } else {
-          console.log("No URL specified. Returning all stored logins.\n");
-          sendEncryptedRPC("GetAllEntries", []);
+          console.log("Result:", JSON.stringify(obj.result, null, 2));
         }
-        return;
       }
+      ws.close();
     }
 
-    // ── SRP path ───────────────────────────────────────────────────────────────
-    if (data.srp) {
-      if (data.srp.stage === "identifyToClient") {
-        if (!srpClient) {
-          console.error("Received SRP challenge but client not initialized.");
-          ws.close();
-          return;
-        }
-        console.log("KeePass is requesting authentication.");
-        console.log(
-          "Please enter the KeePassRPC connection password\n"
-        );
-
-        const password = await prompt("Password: ");
-
-        srpClient.p = password;
-
-        await srpClient.receiveSalts(data.srp.s, data.srp.B);
-
+    ws.on("open", () => {
+      if (storedAuth) {
+        console.log("Sending key-based auth request...");
         sendMessage(
-          buildSetupMessage({
-            stage: "proofToServer",
-            M: srpClient.M,
+          buildSetupMessage(undefined, {
+            username: storedAuth.username,
             securityLevel: SECURITY_LEVEL,
           })
         );
-        return;
-      }
-
-      if (data.srp.stage === "proofToClient") {
-        if (!srpClient) {
-          console.error("Received proof but SRP client not initialized.");
-          ws.close();
-          return;
-        }
-
-        if (srpClient.confirmAuthentication(data.srp.M2)) {
-          console.log("SRP authentication successful!");
-          secretKey = await srpClient.key();
-
-          // Save the auth key for future use
-          saveStoredAuth({
-            username: srpClient.I,
-            secretKey,
-          });
-
-          srpComplete = true;
-          console.log("Key saved. Reconnecting with stored key...");
-          ws.close();
-        } else {
-          console.error("Authentication FAILED: server proof mismatch.");
-          ws.close();
-        }
-        return;
-      }
-
-      return;
-    }
-  }
-
-  function handleJSONRPC(data: any) {
-    if (data.encryptionNotRequired) {
-      const obj = typeof data.jsonrpc === "string" ? JSON.parse(data.jsonrpc) : data.jsonrpc;
-      printResult(obj);
-    } else if (secretKey) {
-      try {
-        const decrypted = decryptAesCbc(secretKey, data.jsonrpc);
-        const obj = JSON.parse(decrypted);
-        printResult(obj);
-      } catch (e: any) {
-        console.error("Decryption failed:", e.message);
-      }
-    }
-  }
-
-  function printResult(obj: any) {
-    if (obj.error) {
-      console.error("RPC Error:", JSON.stringify(obj.error, null, 2));
-    } else if (obj.result !== undefined) {
-      const results = obj.result;
-      if (Array.isArray(results) && results.length === 0) {
-        console.log("No matching logins found.");
-      } else if (Array.isArray(results)) {
-        console.log(`Found ${results.length} login(s):\n`);
-        for (const entry of results) {
-          const title = entry.title || "(untitled)";
-          const username = entry.uN || entry.usernameValue || "(no username)";
-          const urls = (entry.uRLs || []).join(", ") || "(no URLs)";
-          const matchAccuracy = entry.matchAccuracy || "?";
-          const fields = entry.formFieldList || [];
-
-          console.log(`  Title:            ${title}`);
-          console.log(`  Username:         ${username}`);
-          console.log(`  URLs:             ${urls}`);
-          console.log(`  Match Accuracy:   ${matchAccuracy}`);
-          if (fields.length > 0) {
-            console.log(`  Fields:`);
-            for (const f of fields) {
-              const val = f.type === "FFTpassword" ? "********" : f.value;
-              console.log(`    - ${f.displayName || f.name}: ${val}`);
-            }
-          }
-          console.log();
-        }
       } else {
-        console.log("Result:", JSON.stringify(obj.result, null, 2));
+        const username = newGUID();
+        srpClient = new SRPc();
+        srpClient.setup(username);
+        console.log("Initiating SRP authentication...");
+        sendMessage(
+          buildSetupMessage({
+            stage: "identifyToServer",
+            I: srpClient.I,
+            A: srpClient.Astr,
+            securityLevel: SECURITY_LEVEL,
+          })
+        );
       }
-    }
-    ws.close();
-  }
+    });
 
-  ws.on("open", () => {
-    if (storedAuth) {
-      // Key-based auth: send username, server will challenge
-      console.log("Sending key-based auth request...");
-      sendMessage(
-        buildSetupMessage(null, {
-          username: storedAuth.username,
-          securityLevel: SECURITY_LEVEL,
-        })
-      );
-    } else {
-      // SRP auth: initiate
-      const username = newGUID();
-      srpClient = new SRPc();
-      srpClient.setup(username);
-      console.log("Initiating SRP authentication...");
-      sendMessage(
-        buildSetupMessage({
-          stage: "identifyToServer",
-          I: srpClient.I,
-          A: srpClient.Astr,
-          securityLevel: SECURITY_LEVEL,
-        })
-      );
-    }
-  });
+    ws.on("message", (data) => {
+      handleMessage(data.toString());
+    });
 
-  ws.on("message", (data) => {
-    handleMessage(data.toString());
-  });
+    ws.on("error", (err) => {
+      console.error("WebSocket error:", err.message);
+      process.exit(1);
+    });
 
-  ws.on("error", (err) => {
-    console.error("WebSocket error:", err.message);
-    process.exit(1);
-  });
+    await new Promise<void>((resolve) => {
+      ws.on("close", () => resolve());
+    });
 
-  ws.on("close", () => {
-    if (srpComplete || keyAuthFailed) {
+    if (shouldReconnect) {
       console.log("");
-      main();
-    } else {
-      process.exit(0);
+      continue;
     }
-  });
+    break;
+  }
 }
 
 main();
