@@ -2,7 +2,7 @@
   "name": "keepassrpc-cli",
   "displayName": "KeePassRPC CLI",
   "description": "Command-line client for KeePassRPC WebSocket API. Queries logins from KeePass databases via SRP-6a authentication.",
-  "version": "0.1.0",
+  "version": "0.1.11",
   "type": "module",
   "main": "dist/KeePassRPC-CLI.cjs",
   "bin": {
