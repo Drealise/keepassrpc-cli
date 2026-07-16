@@ -12,6 +12,22 @@ function otherFields(entry: LoginEntry): Array<{ label: string; value: string }>
     .map((f) => ({ label: f.displayName || f.name || f.type, value: f.value || "" }));
 }
 
+function formatExpiry(iso: string): string {
+  return iso.replace("T", " ").replace(/\.\d{7}.*$/, "");
+}
+
+function expiryLabel(entry: LoginEntry): string {
+  if (!entry.expires) return "";
+  if (!entry.expiryTime) return "expires";
+  return formatExpiry(entry.expiryTime);
+}
+
+function expiryShort(entry: LoginEntry): string {
+  if (!entry.expires) return "";
+  if (!entry.expiryTime) return "yes";
+  return formatExpiry(entry.expiryTime);
+}
+
 export function formatList(results: LoginEntry[]): string {
   const lines: string[] = [`Found ${results.length} login(s):\n`];
   for (const login of results) {
@@ -27,6 +43,9 @@ export function formatList(results: LoginEntry[]): string {
     lines.push(`  Password:         ${password ? "********" : "(none)"}`);
     lines.push(`  URLs:             ${urls}`);
     lines.push(`  Match Accuracy:   ${matchAccuracy}`);
+    if (login.expires) {
+      lines.push(`  Expires:          ${expiryLabel(login)}`);
+    }
     if (fields.length > 0) {
       lines.push(`  Fields:`);
       for (const f of fields) {
@@ -47,6 +66,7 @@ export function formatTable(results: LoginEntry[]): string {
     password: formField(login, "FFTpassword") ? "********" : "(none)",
     urls: (login.uRLs || []).join(", ") || "(no URLs)",
     match: String(login.matchAccuracy || "?"),
+    expires: expiryShort(login),
   }));
 
   const cols = {
@@ -55,6 +75,7 @@ export function formatTable(results: LoginEntry[]): string {
     password: Math.max(8, ...rows.map((r) => r.password.length)),
     urls: Math.max(4, ...rows.map((r) => r.urls.length)),
     match: Math.max(5, ...rows.map((r) => r.match.length)),
+    expires: Math.max(7, ...rows.map((r) => r.expires.length)),
   };
 
   const sep = (n: number) => "─".repeat(n);
@@ -63,13 +84,15 @@ export function formatTable(results: LoginEntry[]): string {
     `${"Username".padEnd(cols.username)}  ` +
     `${"Password".padEnd(cols.password)}  ` +
     `${"URLs".padEnd(cols.urls)}  ` +
-    `${"Match".padEnd(cols.match)}`;
+    `${"Match".padEnd(cols.match)}  ` +
+    `${"Expires".padEnd(cols.expires)}`;
   const divider =
     `${sep(cols.title)}  ` +
     `${sep(cols.username)}  ` +
     `${sep(cols.password)}  ` +
     `${sep(cols.urls)}  ` +
-    `${sep(cols.match)}`;
+    `${sep(cols.match)}  ` +
+    `${sep(cols.expires)}`;
 
   const lines: string[] = [
     `Found ${results.length} login(s):\n`,
@@ -83,7 +106,8 @@ export function formatTable(results: LoginEntry[]): string {
       `${r.username.padEnd(cols.username)}  ` +
       `${r.password.padEnd(cols.password)}  ` +
       `${r.urls.padEnd(cols.urls)}  ` +
-      `${r.match.padEnd(cols.match)}`
+      `${r.match.padEnd(cols.match)}  ` +
+      `${r.expires.padEnd(cols.expires)}`
     );
   }
 

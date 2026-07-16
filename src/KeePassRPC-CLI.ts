@@ -64,6 +64,7 @@ async function main() {
 
   const args = process.argv.slice(2);
   let format: OutputFormat = "raw";
+  let excludeExpired = false;
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -75,6 +76,8 @@ async function main() {
         console.error(`Unknown format: ${val}. Use list, table, json, or raw.`);
         process.exit(1);
       }
+    } else if (args[i] === "--exclude-expired" || args[i] === "-e") {
+      excludeExpired = true;
     } else {
       positional.push(args[i]);
     }
@@ -321,7 +324,11 @@ async function main() {
         if (Array.isArray(results) && results.length === 0) {
           console.log("No matching logins found.");
         } else if (Array.isArray(results)) {
-          const entries = results as LoginEntry[];
+          let entries = results as LoginEntry[];
+          if (excludeExpired) {
+            const now = Date.now();
+            entries = entries.filter((e) => !(e.expires && new Date(e.expiryTime ?? 0).getTime() < now));
+          }
           switch (format) {
             case "table":
               console.log(formatTable(entries));

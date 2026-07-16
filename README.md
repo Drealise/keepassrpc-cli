@@ -71,9 +71,9 @@ Then the query results are returned.
 ## Command Line Arguments
 
 ```bash
-keepassrpc-cli [url] [port] [--format <format>]
+keepassrpc-cli [url] [port] [--format <format>] [--exclude-expired]
 # or
-npm run start -- [url] [port] [--format <format>]
+npm run start -- [url] [port] [--format <format>] [--exclude-expired]
 ```
 
 | Argument | Description | Default |
@@ -81,6 +81,7 @@ npm run start -- [url] [port] [--format <format>]
 | `url` | URL to query logins for. Omit to return all stored logins. | none |
 | `port` | KeePassRPC WebSocket port | `12546` |
 | `--format`, `-f` | Output format: `raw`, `list`, `table`, or `json` | `raw` |
+| `--exclude-expired`, `-e` | Omit entries where `expires=true` and `expiryTime` is in the past | off |
 
 ### Output Formats
 

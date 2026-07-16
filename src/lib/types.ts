@@ -57,6 +57,8 @@ export interface LoginEntry {
   usernameValue?: string;
   uRLs?: string[];
   matchAccuracy?: number | string;
+  expires?: boolean;
+  expiryTime?: string;
   formFieldList?: Array<{
     type: string;
     name?: string;
