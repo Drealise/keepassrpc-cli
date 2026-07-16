@@ -1,6 +1,8 @@
 # KeePassRPC-CLI
 
-Command-line client for [KeePassRPC](https://github.com/kee-org/keepassrpc). Queries logins from KeePass databases over a local WebSocket connection.
+Command-line client for [KeePassRPC](https://github.com/kee-org/keepassrpc). Queries logins from KeePass databases over a local WebSocket connection.  
+
+Instead of cloning and compiling the repo, you can use the latest self-contained Node binary in [Releases](https://github.com/Drealise/keepassrpc-cli/releases).
 
 ## Prerequisites
 
