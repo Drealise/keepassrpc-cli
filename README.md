@@ -110,9 +110,9 @@ A test KeePass database (with zero-length master password) is included with the 
 
 | Title | Username | URLs | Expires |
 |-------|----------|------|---------|
-| Github (active) | aaaaa@aaa.aa | https://github.com/login | — |
+| Github (active 1) | aaaaa@aaa.aa | https://github.com/login | — |
 | Github (active 2) | bbbbb@bbb.bb | https://github.com/login | — |
-| Github (expired) | xxxxx@xxx.xx | https://github.com/login | 2026-03-04 |
+| Github (expired 1) | xxxxx@xxx.xx | https://github.com/login | 2026-03-04 |
 | Github (expired 2) | zzzzz@zzz.zz | https://github.com/ | 2026-07-15 |
 | Other site | randomUser | https://www.othersite.com | — |
 
