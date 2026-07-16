@@ -71,19 +71,33 @@ Then the query results are returned.
 ## Command Line Arguments
 
 ```bash
-keepassrpc-cli [url] [port]
+keepassrpc-cli [url] [port] [--format <format>]
 # or
-npm run start -- [url] [port]
+npm run start -- [url] [port] [--format <format>]
 ```
 
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `url` | URL to query logins for. Omit to return all stored logins. | none |
 | `port` | KeePassRPC WebSocket port | `12546` |
+| `--format`, `-f` | Output format: `raw`, `list`, `table`, or `json` | `raw` |
+
+### Output Formats
+
+- **`raw`** — Full RPC response as a single-line JSON string (default)
+- **`list`** — Verbose per-entry display with labeled fields
+- **`table`** — Compact columnar view with headers
+- **`json`** — Pretty-printed JSON array of login entries
+
+```bash
+keepassrpc-cli https://example.com -f table
+keepassrpc-cli https://example.com -f json
+keepassrpc-cli https://example.com -f list
+```
 
 ## Session Key File
 
-After the first successful authentication, a session key is saved to `keepassrpc-cli.auth` in the same directory as the script. This file is created automatically and used for subsequent connections.
+After the first successful authentication, a session key is saved to `keepassrpc-cli.auth` in the current working directory. This file is created automatically and used for subsequent connections.
 
 **Note**: This file contains sensitive session data. It is listed in `.gitignore` by default.
 

@@ -18,7 +18,7 @@ import type {
 import { sha256Hex, randomBigInt, versionAsInt, newGUID, SRPc } from "./lib/crypto.js";
 import { encryptAesCbc, decryptAesCbc } from "./lib/encryption.js";
 import { createAuthStore } from "./lib/auth.js";
-import { type OutputFormat, formatList, formatTable, formatJSON } from "./lib/format.js";
+import { type OutputFormat, formatList, formatTable, formatJSON, formatRaw } from "./lib/format.js";
 
 // ─── CLI Constants ──────────────────────────────────────────────────────────────
 const CLIENT_VERSION = [2, 0, 0];
@@ -63,16 +63,16 @@ async function main() {
   const auth = createAuthStore(scriptDir);
 
   const args = process.argv.slice(2);
-  let format: OutputFormat = "list";
+  let format: OutputFormat = "raw";
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if ((args[i] === "--format" || args[i] === "-f") && args[i + 1]) {
       const val = args[++i];
-      if (val === "list" || val === "table" || val === "json") {
+      if (val === "list" || val === "table" || val === "json" || val === "raw") {
         format = val;
       } else {
-        console.error(`Unknown format: ${val}. Use list, table, or json.`);
+        console.error(`Unknown format: ${val}. Use list, table, json, or raw.`);
         process.exit(1);
       }
     } else {
@@ -308,6 +308,12 @@ async function main() {
     }
 
     function printResult(obj: JSONRPCResponse) {
+      if (format === "raw") {
+        console.log(formatRaw(obj));
+        ws.close();
+        return;
+      }
+
       if (obj.error) {
         console.error("RPC Error:", JSON.stringify(obj.error, null, 2));
       } else if (obj.result !== undefined) {

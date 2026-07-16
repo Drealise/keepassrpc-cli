@@ -1,6 +1,6 @@
 import type { LoginEntry } from "./types.js";
 
-export type OutputFormat = "list" | "table" | "json";
+export type OutputFormat = "list" | "table" | "json" | "raw";
 
 function formField(entry: LoginEntry, type: string): string | undefined {
   return entry.formFieldList?.find((f) => f.type === type)?.value;
@@ -92,4 +92,8 @@ export function formatTable(results: LoginEntry[]): string {
 
 export function formatJSON(results: LoginEntry[]): string {
   return JSON.stringify(results, null, 2);
+}
+
+export function formatRaw(obj: unknown): string {
+  return JSON.stringify(obj);
 }
