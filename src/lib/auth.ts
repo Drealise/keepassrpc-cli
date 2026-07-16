@@ -1,9 +1,7 @@
 import * as fs from "fs";
-import * as path from "path";
 import type { StoredAuth } from "./types.js";
 
-export function createAuthStore(dir: string) {
-  const authFile = path.join(dir, "keepassrpc-cli.auth");
+export function createAuthStore(authFile: string) {
 
   return {
     load(): StoredAuth | null {

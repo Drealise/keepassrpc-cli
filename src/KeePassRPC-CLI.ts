@@ -2,6 +2,8 @@
 
 import WebSocket from "ws";
 import * as readline from "readline";
+import * as path from "path";
+import { fileURLToPath } from "url";
 
 import type {
   SetupPayload,
@@ -57,8 +59,12 @@ function buildSetupMessage(srp?: SetupPayload, key?: KeySetupPayload): OutgoingS
 }
 
 async function main() {
-  const scriptDir = __dirname;
-  const auth = createAuthStore(scriptDir);
+  const currentFile = typeof __filename !== "undefined"
+    ? __filename
+    : fileURLToPath(import.meta.url);
+  const scriptDir = path.dirname(currentFile);
+  const scriptName = path.basename(currentFile, path.extname(currentFile));
+  const auth = createAuthStore(path.join(scriptDir, `${scriptName}.auth`));
 
   const args = process.argv.slice(2);
   let format: OutputFormat = "raw";
