@@ -98,9 +98,27 @@ keepassrpc-cli https://example.com -f list
 
 ## Session Key File
 
-After the first successful authentication, a session key is saved to `keepassrpc-cli.auth` in the current working directory. This file is created automatically and used for subsequent connections.
+After the first successful authentication, a session key is saved to `<scriptname>.auth` in the same directory as the script. For the built bundle this is `dist/KeePassRPC-CLI.auth`; when running from source via `esno`, it is `src/KeePassRPC-CLI.auth`.
 
 **Note**: This file contains sensitive session data. It is listed in `.gitignore` by default.
+
+## Test Database
+
+A test KeePass database (with zero-length master password) is included with the following entries:
+
+| Title | Username | URLs | Expires |
+|-------|----------|------|---------|
+| Github (active) | aaaaa@aaa.aa | https://github.com/login | — |
+| Github (active 2) | bbbbb@bbb.bb | https://github.com/login | — |
+| Github (expired) | xxxxx@xxx.xx | https://github.com/login | 2026-03-04 |
+| Github (expired 2) | zzzzz@zzz.zz | https://github.com/ | 2026-07-15 |
+| Other site | randomUser | https://www.othersite.com | — |
+
+To query all entries:
+
+```bash
+keepassrpc-cli -f list
+```
 
 ## Development
 
